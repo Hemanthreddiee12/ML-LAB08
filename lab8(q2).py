@@ -1,74 +1,106 @@
 import numpy as np
-import pandas as pd
-from sklearn.model_selection import train_test_split
+from collections import Counter
+import math
 
-class DecisionTreeRootNodeDetector:
+class DecisionTree:
     def __init__(self):
         pass
     
-    def calculate_entropy(self, y):
-        # Calculate entropy
-        classes, counts = np.unique(y, return_counts=True)
+    def entropy(self, labels):
+        label_counts = Counter(labels)
+        num_labels = len(labels)
         entropy = 0
-        total_samples = len(y)
-        for count in counts:
-            probability = count / total_samples
-            entropy -= probability * np.log2(probability)
+        for count in label_counts.values():
+            prob = count / num_labels
+            entropy -= prob * math.log(prob, 2)
         return entropy
     
-    def calculate_information_gain(self, X, y, feature_idx):
-        # Calculate information gain for a specific feature
-        total_entropy = self.calculate_entropy(y)
-        unique_values, value_counts = np.unique(X[:, feature_idx], return_counts=True)
-        weighted_entropy = 0
-        for value, count in zip(unique_values, value_counts):
-            subset_indices = np.where(X[:, feature_idx] == value)[0]
-            subset_y = y[subset_indices]
-            subset_entropy = self.calculate_entropy(subset_y)
-            weighted_entropy += (count / len(X)) * subset_entropy
-        information_gain = total_entropy - weighted_entropy
+    def information_gain(self, data, labels, feature_idx):
+        # Calculate parent entropy
+        parent_entropy = self.entropy(labels)
+        
+        # Calculate weighted sum of child entropies
+        unique_values = np.unique(data[:, feature_idx])
+        children_entropy = 0
+        for value in unique_values:
+            child_indices = np.where(data[:, feature_idx] == value)[0]
+            child_labels = labels[child_indices]
+            children_entropy += (len(child_labels) / len(labels)) * self.entropy(child_labels)
+        
+        # Calculate information gain
+        information_gain = parent_entropy - children_entropy
+        
         return information_gain
     
-    def find_root_node(self, X, y):
-        num_features = X.shape[1]
-        best_information_gain = -1
+    def find_root_node(self, data, labels, feature_names):
+        num_features = data.shape[1]
         best_feature_idx = None
-        for i in range(num_features):
-            information_gain = self.calculate_information_gain(X, y, i)
-            if information_gain > best_information_gain:
-                best_information_gain = information_gain
-                best_feature_idx = i
-        return best_feature_idx
-
-# Function to load dataset from path
-def load_dataset(dataset_path, target_column):
-    data = pd.read_csv(dataset_path)
-    # Assuming 'date' is not relevant for decision making, dropping it
-    data = data.drop(columns=['Date'])
+        max_information_gain = -float('inf')
+        
+        for feature_idx in range(num_features):
+            information_gain = self.information_gain(data, labels, feature_idx)
+            if information_gain > max_information_gain:
+                max_information_gain = information_gain
+                best_feature_idx = feature_idx
+                
+        return best_feature_idx, feature_names[best_feature_idx]
     
-    # Binning numerical features 'e', 'f', 'g', and 'h' if needed
+    def equal_width_binning(self, feature_values, num_bins):
+        min_val = min(feature_values)
+        max_val = max(feature_values)
+        bin_width = (max_val - min_val) / num_bins
+        bins = [min_val + i * bin_width for i in range(num_bins)]
+        binned_values = np.digitize(feature_values, bins)
+        return binned_values
     
-    # Example of binning 'e'
-    data['Region'] = pd.qcut(data['Region'], q=4, labels=False)
+    def frequency_binning(self, feature_values, num_bins):
+        sorted_values = np.sort(feature_values)
+        bin_size = len(feature_values) // num_bins
+        bins = [sorted_values[i * bin_size] for i in range(num_bins)]
+        binned_values = np.digitize(feature_values, bins)
+        return binned_values
     
-    X = data.drop(columns=[target_column]).values
-    y = data[target_column].values
-    return X, y
 
-# Replace 'dataset_path' with the actual path of your dataset CSV file
-dataset_path = r"C:\Users\heman\OneDrive\Documents\SEM_4\ML\Unemployment_in_India.csv"
-target_column = 'Region'
+# Example usage:
+def load_data(dataset_path):
+    data = np.genfromtxt(dataset_path, delimiter=',', dtype=str)
+    features = data[0, :-1]
+    labels = data[1:, -1]
+    data = data[1:, :-1]
+    return data, labels, features
 
-# Load dataset
-X, y = load_dataset(dataset_path, target_column)
+def binning_decision_tree(dataset_path, binning_type='equal_width', num_bins=5):
+    dt = DecisionTree()
+    data, labels, feature_names = load_data(dataset_path)
+    
+    if binning_type == 'equal_width':
+        binning_function = dt.equal_width_binning
+    elif binning_type == 'frequency':
+        binning_function = dt.frequency_binning
+    else:
+        print("Invalid binning type. Using default equal width binning.")
+        binning_function = dt.equal_width_binning
+        
+    binned_data = []
+    for feature_idx in range(data.shape[1]):
+        feature_values = data[:, feature_idx]
+        
+        # Skip binning for non-numeric features
+        if not np.issubdtype(feature_values.dtype, np.number):
+            binned_data.append(feature_values)
+            continue
+        
+        feature_values = feature_values.astype(float)
+        
+        binned_values = binning_function(feature_values, num_bins)
+        binned_data.append(binned_values)
+    
+    binned_data = np.array(binned_data).T
+    root_node_idx, root_node_name = dt.find_root_node(binned_data, labels, feature_names)
+    print("Root node of the Decision Tree after binning:")
+    print("Feature index:", root_node_idx)
+    print("Feature name:", root_node_name)
 
-
-# Split the dataset into training and testing sets
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-
-# Initialize the root node detector
-root_node_detector = DecisionTreeRootNodeDetector()
-
-# Find the root node feature index
-root_node_feature_idx = root_node_detector.find_root_node(X_train, y_train)
-print("Root node feature index:", root_node_feature_idx)
+# Example usage:
+dataset_path = r"C:\Users\heman\OneDrive\Documents\SEM_4\ML\Lab\8\Unemployment_in_India.csv"  # Replace "your_dataset.csv" with the path to your dataset file
+binning_decision_tree(dataset_path, binning_type='equal_width', num_bins=5)
